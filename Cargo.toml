@@ -1,0 +1,30 @@
+[package]
+name = "my_lang"
+version = "0.1.0"
+authors = ["Benedikt Mandelkow <benedikt.mandelkow@rwth-aachen.de>"]
+edition = "2018"
+publish = false
+
+[dependencies]
+itertools = "*"
+color-backtrace = "*"
+
+[dev-dependencies]
+criterion = { version = "0.3", default-features = false }
+
+[profile.release]
+debug = true
+lto = true
+opt-level = 3
+
+[lib]
+name = "lang_lib"
+path = "src/lib.rs"
+
+[[bin]]
+name = "lang_bin"
+path = "src/bin/main.rs"
+
+[[bench]]
+name = "bench"
+harness = false
