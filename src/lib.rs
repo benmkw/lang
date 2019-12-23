@@ -1,18 +1,8 @@
 // https://users.rust-lang.org/t/takewhile-iterator-over-chars-to-string-slice/11014/2
 use itertools::*;
-use std::collections;
 
 #[cfg(test)]
 mod tests;
-
-// https://stackoverflow.com/a/28392068
-macro_rules! hashmap {
-    ($( $key: expr => $val: expr ),*) => {{
-         let mut map= ::std::collections::HashMap::new();
-         $( map.insert($key, $val); )*
-         map
-    }}
-}
 
 macro_rules! rule {
     ($prefix : expr, $infix : expr ; $precedence : expr) => {{
@@ -114,34 +104,6 @@ fn tokenize(s: &str) -> Vec<Token> {
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
-enum MapToken {
-    Number,
-    Plus,
-    Minus,
-    Star,
-    Slash,
-    UpArrow,
-    LParen,
-    RParen,
-}
-
-impl Token {
-    fn to_map_token(self) -> MapToken {
-        use Token::*;
-        match self {
-            Number(_) => MapToken::Number,
-            Plus => MapToken::Plus,
-            Minus => MapToken::Minus,
-            Star => MapToken::Star,
-            Slash => MapToken::Slash,
-            UpArrow => MapToken::UpArrow,
-            LParen => MapToken::LParen,
-            RParen => MapToken::RParen,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub enum Operation {
     Number(i64),
     Add,
@@ -174,9 +136,7 @@ impl Precedence {
     }
 }
 
-type RuleMap = collections::HashMap<MapToken, ParseRule>;
-
-type ParseFn = Box<dyn Fn(&RuleMap, &mut Vec<Token>, &mut Vec<Operation>, &Token)>;
+type ParseFn = Box<dyn Fn(&mut Vec<Token>, &mut Vec<Operation>, &Token)>;
 type OptParseFn = Option<ParseFn>;
 
 struct ParseRule {
@@ -185,34 +145,24 @@ struct ParseRule {
     precedence: Precedence,
 }
 
-fn number(_: &RuleMap, _: &mut Vec<Token>, ops: &mut Vec<Operation>, curr_token: &Token) {
+fn number(_: &mut Vec<Token>, ops: &mut Vec<Operation>, curr_token: &Token) {
     match curr_token {
         Token::Number(n) => ops.push(Operation::Number(*n)),
         x => panic!("{:?} no number found in number parse fn", x),
     }
 }
 
-fn grouping(
-    rules: &RuleMap,
-    mut tokens: &mut Vec<Token>,
-    mut ops: &mut Vec<Operation>,
-    curr_token: &Token,
-) {
+fn grouping(mut tokens: &mut Vec<Token>, mut ops: &mut Vec<Operation>, curr_token: &Token) {
     assert_eq!(curr_token, &Token::LParen);
 
-    parse_precedence(&rules, &mut tokens, &mut ops, Precedence::TERM);
+    parse_precedence(&mut tokens, &mut ops, Precedence::TERM);
 
     let token = tokens.pop();
     assert_eq!(token, Some(Token::RParen));
 }
 
-fn binary(
-    rules: &RuleMap,
-    mut tokens: &mut Vec<Token>,
-    mut ops: &mut Vec<Operation>,
-    curr_token: &Token,
-) {
-    let rule = &rules[&curr_token.to_map_token()];
+fn binary(mut tokens: &mut Vec<Token>, mut ops: &mut Vec<Operation>, curr_token: &Token) {
+    let rule = token_to_rule(&curr_token);
     let precedence = &rule.precedence;
 
     let next_precedence = match curr_token {
@@ -223,7 +173,7 @@ fn binary(
         _ => unreachable!(),
     };
 
-    parse_precedence(&rules, &mut tokens, &mut ops, next_precedence);
+    parse_precedence(&mut tokens, &mut ops, next_precedence);
 
     match curr_token {
         Token::Number(x) => ops.push(Operation::Number(*x)),
@@ -236,9 +186,27 @@ fn binary(
     }
 }
 
+fn token_to_rule(token: &Token) -> ParseRule {
+    use Token::*;
+
+    match token {
+        Number(_) => rule!(Some(number), OptParseFn::None ; Precedence::NONE),
+
+        Plus => rule!(OptParseFn::None, Some(binary) ; Precedence::TERM),
+        Minus => rule!(OptParseFn::None, Some(binary) ; Precedence::TERM),
+
+        Star => rule!(OptParseFn::None, Some(binary) ; Precedence::FACTOR),
+        Slash => rule!(OptParseFn::None, Some(binary) ; Precedence::FACTOR),
+
+        UpArrow => rule!(OptParseFn::None, Some(binary) ; Precedence::EXP),
+
+        LParen => rule!(Some(grouping), OptParseFn::None ; Precedence::CALL),
+        RParen => rule!(OptParseFn::None, OptParseFn::None ; Precedence::NONE),
+    }
+}
+
 // uses .pop and .last on vector thus operates right to left thus the elements get reversed first
 fn parse_precedence(
-    rules: &RuleMap,
     mut tokens: &mut Vec<Token>,
     mut ops: &mut Vec<Operation>,
     precedence: Precedence,
@@ -249,10 +217,10 @@ fn parse_precedence(
     assert!(!tokens.is_empty());
 
     let token = tokens.pop().unwrap();
-    let rule = &rules[&token.to_map_token()];
+    let rule = token_to_rule(&token);
 
     if let Some(prefix_rule) = &rule.prefix {
-        prefix_rule(&rules, &mut tokens, &mut ops, &token);
+        prefix_rule(&mut tokens, &mut ops, &token);
     } else {
         panic!(
             "no suitable prefix rule found: {:?} for token: {:?}",
@@ -262,14 +230,14 @@ fn parse_precedence(
 
     // INFIX RULES
     while !tokens.is_empty() {
-        if precedence > rules[&tokens.last().unwrap().to_map_token()].precedence {
+        if precedence > token_to_rule(&tokens.last().unwrap()).precedence {
             break;
         }
 
         let token = tokens.pop().unwrap();
 
-        if let Some(infix_rule) = &rules[&token.to_map_token()].infix {
-            infix_rule(&rules, &mut tokens, &mut ops, &token);
+        if let Some(infix_rule) = token_to_rule(&token).infix {
+            infix_rule(&mut tokens, &mut ops, &token);
         } else {
             panic!(
                 "expected to find infix rule but did not find one for token: {:?}",
@@ -281,21 +249,6 @@ fn parse_precedence(
 
 pub fn run(input: &str) -> i64 {
     // println!("{}", input);
-    use MapToken::*;
-    let rules = hashmap![
-    Number => rule!(Some(number), OptParseFn::None ; Precedence::NONE),
-
-    Plus => rule!(OptParseFn::None, Some(binary) ; Precedence::TERM),
-    Minus => rule!(OptParseFn::None, Some(binary) ; Precedence::TERM),
-
-    Star => rule!(OptParseFn::None, Some(binary) ; Precedence::FACTOR),
-    Slash => rule!(OptParseFn::None, Some(binary) ; Precedence::FACTOR),
-
-    UpArrow => rule!(OptParseFn::None, Some(binary) ; Precedence::EXP),
-
-    LParen => rule!(Some(grouping), OptParseFn::None ; Precedence::CALL),
-    RParen => rule!(OptParseFn::None, OptParseFn::None ; Precedence::NONE)
-    ];
 
     let mut tokens = tokenize(input);
     // dbg!(&tokens);
@@ -303,7 +256,7 @@ pub fn run(input: &str) -> i64 {
     tokens.reverse();
 
     let mut ops = vec![];
-    parse_precedence(&rules, &mut tokens, &mut ops, Precedence::NONE);
+    parse_precedence(&mut tokens, &mut ops, Precedence::NONE);
     // dbg!(&ops);
 
     ops.reverse();
