@@ -8,11 +8,11 @@ macro_rules! rule {
     ($prefix : expr, $infix : expr ; $precedence : expr) => {{
         ParseRule {
             prefix: match $prefix {
-                Some(prefix) => Some(Box::new(prefix)),
+                Some(prefix) => Some(prefix),
                 None => None,
             },
             infix: match $infix {
-                Some(infix) => Some(Box::new(infix)),
+                Some(infix) => Some(infix),
                 None => None,
             },
             precedence: $precedence,
@@ -136,12 +136,12 @@ impl Precedence {
     }
 }
 
-type ParseFn = Box<dyn Fn(&mut Vec<Token>, &mut Vec<Operation>, &Token)>;
-type OptParseFn = Option<ParseFn>;
+type ParseFn = dyn Fn(&mut Vec<Token>, &mut Vec<Operation>, &Token);
+type OptParseFn<'a> = Option<& 'a ParseFn>;
 
-struct ParseRule {
-    prefix: OptParseFn,
-    infix: OptParseFn,
+struct ParseRule<'a> {
+    prefix: OptParseFn<'a>,
+    infix: OptParseFn<'a>,
     precedence: Precedence,
 }
 
@@ -190,17 +190,17 @@ fn token_to_rule(token: &Token) -> ParseRule {
     use Token::*;
 
     match token {
-        Number(_) => rule!(Some(number), OptParseFn::None ; Precedence::NONE),
+        Number(_) => rule!(Some(&number), OptParseFn::None ; Precedence::NONE),
 
-        Plus => rule!(OptParseFn::None, Some(binary) ; Precedence::TERM),
-        Minus => rule!(OptParseFn::None, Some(binary) ; Precedence::TERM),
+        Plus => rule!(OptParseFn::None, Some(&binary) ; Precedence::TERM),
+        Minus => rule!(OptParseFn::None, Some(&binary) ; Precedence::TERM),
 
-        Star => rule!(OptParseFn::None, Some(binary) ; Precedence::FACTOR),
-        Slash => rule!(OptParseFn::None, Some(binary) ; Precedence::FACTOR),
+        Star => rule!(OptParseFn::None, Some(&binary) ; Precedence::FACTOR),
+        Slash => rule!(OptParseFn::None, Some(&binary) ; Precedence::FACTOR),
 
-        UpArrow => rule!(OptParseFn::None, Some(binary) ; Precedence::EXP),
+        UpArrow => rule!(OptParseFn::None, Some(&binary) ; Precedence::EXP),
 
-        LParen => rule!(Some(grouping), OptParseFn::None ; Precedence::CALL),
+        LParen => rule!(Some(&grouping), OptParseFn::None ; Precedence::CALL),
         RParen => rule!(OptParseFn::None, OptParseFn::None ; Precedence::NONE),
     }
 }
