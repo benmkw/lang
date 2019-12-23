@@ -61,34 +61,51 @@ fn tokenize(s: &str) -> Vec<Token> {
 
     let mut tokens: Vec<Token> = Vec::new();
 
-    let mut iter = s.chars();
-    while let Some(c) = iter.clone().peekable().peek() {
-        if c.to_string().parse::<i64>().is_ok() {
-            let num: String = iter
-                .by_ref()
-                .take_while_ref(|&c| c.to_string().parse::<i64>().is_ok())
-                .collect();
-
-            if let Ok(num) = num.parse::<i64>() {
-                tokens.push(Number(num));
-            } else {
-                panic!("{:?} {}", num, "could not handle the number\n");
+    let mut iter = s.chars().peekable();
+    while let Some(c) = iter.peek() {
+        match c {
+            '+' => {
+                tokens.push(Plus);
+                iter.next();
             }
-        }
+            '-' => {
+                tokens.push(Minus);
+                iter.next();
+            }
+            '*' => {
+                tokens.push(Star);
+                iter.next();
+            }
+            '/' => {
+                tokens.push(Slash);
+                iter.next();
+            }
+            '^' => {
+                tokens.push(UpArrow);
+                iter.next();
+            }
+            '(' => {
+                tokens.push(LParen);
+                iter.next();
+            }
+            ')' => {
+                tokens.push(RParen);
+                iter.next();
+            }
+            ' ' => {
+                iter.next();
+            }
+            num => {
+                assert!(num.is_digit(10));
+                let num: String = iter
+                    // Return an iterator adapter that borrows from this iterator
+                    // and takes items while the closure accept returns true.
+                    // or better take_while_ref ?
+                    .peeking_take_while(|c| c.is_digit(10))
+                    .collect();
 
-        // take_while has advanced over the + sign here already,
-        // we would need to call iter.curr() or something like that but alas it does not exist??
-        // https://docs.rs/itertools/0.8.0/itertools/trait.Itertools.html#method.peeking_take_while solves this
-        if let Some(c) = iter.next() {
-            match c {
-                '+' => tokens.push(Plus),
-                '-' => tokens.push(Minus),
-                '*' => tokens.push(Star),
-                '/' => tokens.push(Slash),
-                '^' => tokens.push(UpArrow),
-                '(' => tokens.push(LParen),
-                ')' => tokens.push(RParen),
-                val => panic!("{}  case not handled", val),
+                let num = num.parse::<i64>().unwrap();
+                tokens.push(Number(num));
             }
         }
     }
@@ -143,6 +160,7 @@ pub enum Precedence {
     CALL,
     MAX,
 }
+
 impl Precedence {
     fn next_precedence(&self) -> Precedence {
         match self {
@@ -158,8 +176,7 @@ impl Precedence {
 
 type RuleMap = collections::HashMap<MapToken, ParseRule>;
 
-type ParseFn =
-    Box<dyn Fn(&RuleMap, &[Token], &mut [Operation], &Token) -> (Vec<Token>, Vec<Operation>)>;
+type ParseFn = Box<dyn Fn(&RuleMap, &mut Vec<Token>, &mut Vec<Operation>, &Token)>;
 type OptParseFn = Option<ParseFn>;
 
 struct ParseRule {
@@ -168,50 +185,33 @@ struct ParseRule {
     precedence: Precedence,
 }
 
-fn number(
-    _: &RuleMap,
-    tokens: &[Token],
-    ops: &mut [Operation],
-    curr_token: &Token,
-) -> (Vec<Token>, Vec<Operation>) {
-    let mut ops = ops.to_vec();
-
+fn number(_: &RuleMap, _: &mut Vec<Token>, ops: &mut Vec<Operation>, curr_token: &Token) {
     match curr_token {
         Token::Number(n) => ops.push(Operation::Number(*n)),
-        x => panic!("{:?}  no number found in number parse fn", x),
+        x => panic!("{:?} no number found in number parse fn", x),
     }
-
-    (tokens.to_vec(), ops)
 }
 
 fn grouping(
     rules: &RuleMap,
-    tokens: &[Token],
-    ops: &mut [Operation],
+    mut tokens: &mut Vec<Token>,
+    mut ops: &mut Vec<Operation>,
     curr_token: &Token,
-) -> (Vec<Token>, Vec<Operation>) {
+) {
     assert_eq!(curr_token, &Token::LParen);
 
-    let mut tokens = tokens.to_vec();
-    let mut ops = ops.to_vec();
+    parse_precedence(&rules, &mut tokens, &mut ops, Precedence::TERM);
 
-    let (new_tokens, new_ops) = parse_precedence(&rules, &tokens, &mut ops, Precedence::TERM);
-    tokens = new_tokens;
-    ops = new_ops;
-
-    assert_eq!(tokens.pop(), Some(Token::RParen));
-    (tokens.to_vec(), ops.to_vec())
+    let token = tokens.pop();
+    assert_eq!(token, Some(Token::RParen));
 }
 
 fn binary(
     rules: &RuleMap,
-    tokens: &[Token],
-    ops: &mut [Operation],
+    mut tokens: &mut Vec<Token>,
+    mut ops: &mut Vec<Operation>,
     curr_token: &Token,
-) -> (Vec<Token>, Vec<Operation>) {
-    let mut tokens = tokens.to_vec();
-    let mut ops = ops.to_vec();
-
+) {
     let rule = &rules[&curr_token.to_map_token()];
     let precedence = &rule.precedence;
 
@@ -223,9 +223,7 @@ fn binary(
         _ => unreachable!(),
     };
 
-    let (new_tokens, new_ops) = parse_precedence(&rules, &tokens, &mut ops, next_precedence);
-    tokens = new_tokens;
-    ops = new_ops;
+    parse_precedence(&rules, &mut tokens, &mut ops, next_precedence);
 
     match curr_token {
         Token::Number(x) => ops.push(Operation::Number(*x)),
@@ -234,22 +232,17 @@ fn binary(
         Token::Star => ops.push(Operation::Mult),
         Token::Slash => ops.push(Operation::Div),
         Token::UpArrow => ops.push(Operation::Exp),
-        _ => unreachable!(),
+        Token::LParen | Token::RParen => unreachable!(),
     }
-
-    (tokens.to_vec(), ops.to_vec())
 }
 
 // uses .pop and .last on vector thus operates right to left thus the elements get reversed first
 fn parse_precedence(
     rules: &RuleMap,
-    tokens: &[Token],
-    ops: &mut [Operation],
+    mut tokens: &mut Vec<Token>,
+    mut ops: &mut Vec<Operation>,
     precedence: Precedence,
-) -> (Vec<Token>, Vec<Operation>) {
-    let mut tokens = tokens.to_vec();
-    let mut ops = ops.to_vec();
-
+) {
     // dbg!(&ops);
 
     // PREFIX RULE
@@ -259,9 +252,7 @@ fn parse_precedence(
     let rule = &rules[&token.to_map_token()];
 
     if let Some(prefix_rule) = &rule.prefix {
-        let (new_tokens, new_ops) = prefix_rule(&rules, &tokens, &mut ops, &token);
-        tokens = new_tokens;
-        ops = new_ops;
+        prefix_rule(&rules, &mut tokens, &mut ops, &token);
     } else {
         panic!(
             "no suitable prefix rule found: {:?} for token: {:?}",
@@ -278,18 +269,14 @@ fn parse_precedence(
         let token = tokens.pop().unwrap();
 
         if let Some(infix_rule) = &rules[&token.to_map_token()].infix {
-            let (new_tokens, new_ops) = infix_rule(&rules, &tokens, &mut ops, &token);
-            tokens = new_tokens;
-            ops = new_ops;
+            infix_rule(&rules, &mut tokens, &mut ops, &token);
         } else {
             panic!(
                 "expected to find infix rule but did not find one for token: {:?}",
-                &token
+                token
             );
         }
     }
-
-    (tokens.to_vec(), ops.to_vec())
 }
 
 pub fn run(input: &str) -> i64 {
@@ -310,27 +297,24 @@ pub fn run(input: &str) -> i64 {
     RParen => rule!(OptParseFn::None, OptParseFn::None ; Precedence::NONE)
     ];
 
-    let mut tokens: Vec<Token> = tokenize(input);
+    let mut tokens = tokenize(input);
     // dbg!(&tokens);
 
-    let tokens = &mut tokens[..];
     tokens.reverse();
-    let tokens = tokens.to_vec();
 
-    let mut ops = Vec::<Operation>::new();
-    let (_, mut ops) = parse_precedence(&rules, &tokens, &mut ops, Precedence::NONE);
+    let mut ops = vec![];
+    parse_precedence(&rules, &mut tokens, &mut ops, Precedence::NONE);
     // dbg!(&ops);
 
-    ops[..].reverse();
+    ops.reverse();
 
     // print!("DONE running\n\n\n");
     interpret(&mut ops)
 }
 
 // like parse_precedence, interpret runs right to left thus the arg has to be reversed first
-pub fn interpret(ops: &mut [Operation]) -> i64 {
+pub fn interpret(ops: &mut Vec<Operation>) -> i64 {
     assert!(!ops.is_empty());
-    let mut ops = ops.to_vec();
     // dbg!(&ops);
 
     let mut curr_ops = vec![];
