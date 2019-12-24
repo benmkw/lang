@@ -13,7 +13,7 @@ fn throughput(c: &mut Criterion) {
     let base_input = "29*4^5-50";
     let strlen = base_input.chars().count() + 1;
 
-    for size in [1, 3, 10, 50].iter() {
+    for size in [50, 1_000].iter() {
         let input: String = std::iter::repeat(format!("{}+", base_input))
             .take(*size)
             .collect();
@@ -30,4 +30,5 @@ fn throughput(c: &mut Criterion) {
 }
 
 criterion_group!(benches, basic_benchmark, throughput);
+// criterion_group!(benches, throughput);
 criterion_main!(benches);

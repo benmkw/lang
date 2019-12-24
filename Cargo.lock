@@ -348,7 +348,6 @@ version = "0.1.0"
 dependencies = [
  "color-backtrace 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "criterion 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "itertools 0.8.2 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]

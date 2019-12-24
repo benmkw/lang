@@ -6,7 +6,6 @@ edition = "2018"
 publish = false
 
 [dependencies]
-itertools = "*"
 color-backtrace = "*"
 
 [dev-dependencies]

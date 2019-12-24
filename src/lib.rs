@@ -1,6 +1,3 @@
-// https://users.rust-lang.org/t/takewhile-iterator-over-chars-to-string-slice/11014/2
-use itertools::*;
-
 #[cfg(test)]
 mod tests;
 
@@ -49,53 +46,30 @@ enum Token {
 fn tokenize(s: &str) -> Vec<Token> {
     use Token::*;
 
-    let mut tokens: Vec<Token> = Vec::new();
+    let mut tokens = vec![];
 
     let mut iter = s.chars().peekable();
-    while let Some(c) = iter.peek() {
+    while let Some(c) = iter.next() {
         match c {
-            '+' => {
-                tokens.push(Plus);
-                iter.next();
-            }
-            '-' => {
-                tokens.push(Minus);
-                iter.next();
-            }
-            '*' => {
-                tokens.push(Star);
-                iter.next();
-            }
-            '/' => {
-                tokens.push(Slash);
-                iter.next();
-            }
-            '^' => {
-                tokens.push(UpArrow);
-                iter.next();
-            }
-            '(' => {
-                tokens.push(LParen);
-                iter.next();
-            }
-            ')' => {
-                tokens.push(RParen);
-                iter.next();
-            }
-            ' ' => {
-                iter.next();
-            }
-            num => {
-                assert!(num.is_digit(10));
-                let num: String = iter
-                    // Return an iterator adapter that borrows from this iterator
-                    // and takes items while the closure accept returns true.
-                    // or better take_while_ref ?
-                    .peeking_take_while(|c| c.is_digit(10))
-                    .collect();
+            '+' => tokens.push(Plus),
+            '-' => tokens.push(Minus),
+            '*' => tokens.push(Star),
+            '/' => tokens.push(Slash),
+            '^' => tokens.push(UpArrow),
+            '(' => tokens.push(LParen),
+            ')' => tokens.push(RParen),
+            ' ' => {}
+            digit_c => {
+                assert!(digit_c.is_digit(10));
+                let mut num_acc = digit_c.to_digit(10).unwrap() as i64;
 
-                let num = num.parse::<i64>().unwrap();
-                tokens.push(Number(num));
+                while let Some(curr_number) = iter.peek().and_then(|c| c.to_digit(10)) {
+                    num_acc *= 10;
+                    num_acc += curr_number as i64;
+                    iter.next();
+                }
+
+                tokens.push(Number(num_acc));
             }
         }
     }
@@ -137,7 +111,7 @@ impl Precedence {
 }
 
 type ParseFn = dyn Fn(&mut Vec<Token>, &mut Vec<Operation>, &Token);
-type OptParseFn<'a> = Option<& 'a ParseFn>;
+type OptParseFn<'a> = Option<&'a ParseFn>;
 
 struct ParseRule<'a> {
     prefix: OptParseFn<'a>,
