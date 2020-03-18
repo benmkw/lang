@@ -32,7 +32,7 @@ macro_rules! binary_op {
 }
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-enum Token {
+pub enum Token {
     Number(i64),
     Plus,
     Minus,
@@ -43,11 +43,13 @@ enum Token {
     RParen,
 }
 
-fn tokenize(s: &str) -> Vec<Token> {
+pub fn tokenize(s: &str) -> Vec<Token> {
     use Token::*;
 
     let mut tokens = vec![];
 
+    // could skip utf-8 validation and work on bytes but not clear if its really worth it
+    // benchmarks show different results, change is very easy though
     let mut iter = s.chars().peekable();
     while let Some(c) = iter.next() {
         match c {
@@ -60,10 +62,10 @@ fn tokenize(s: &str) -> Vec<Token> {
             ')' => tokens.push(RParen),
             ' ' => {}
             digit_c => {
-                assert!(digit_c.is_digit(10));
+                debug_assert!(digit_c.is_digit(10));
                 let mut num_acc = digit_c.to_digit(10).unwrap() as i64;
 
-                while let Some(curr_number) = iter.peek().and_then(|c| c.to_digit(10)) {
+                while let Some(curr_number) = iter.peek().and_then(|&c| c.to_digit(10)) {
                     num_acc *= 10;
                     num_acc += curr_number as i64;
                     iter.next();
@@ -110,8 +112,8 @@ impl Precedence {
     }
 }
 
-type ParseFn = dyn Fn(&mut Vec<Token>, &mut Vec<Operation>, &Token);
-type OptParseFn<'a> = Option<&'a ParseFn>;
+type ParseFn<'a> = dyn Fn(&'a [Token], &mut Vec<Operation>) -> &'a [Token];
+type OptParseFn<'a> = Option<&'a ParseFn<'a>>;
 
 struct ParseRule<'a> {
     prefix: OptParseFn<'a>,
@@ -119,38 +121,43 @@ struct ParseRule<'a> {
     precedence: Precedence,
 }
 
-fn number(_: &mut Vec<Token>, ops: &mut Vec<Operation>, curr_token: &Token) {
-    match curr_token {
-        Token::Number(n) => ops.push(Operation::Number(*n)),
-        x => panic!("{:?} no number found in number parse fn", x),
+#[must_use]
+fn number<'a>(tokens: &'a [Token], ops: &mut Vec<Operation>) -> &'a [Token] {
+    match tokens[0] {
+        Token::Number(n) => ops.push(Operation::Number(n)),
+        x => panic!("found Token {:?} in call to number<'a>()... ", x),
     }
+
+    &tokens[1..]
 }
 
-fn grouping(mut tokens: &mut Vec<Token>, mut ops: &mut Vec<Operation>, curr_token: &Token) {
-    assert_eq!(curr_token, &Token::LParen);
+#[must_use]
+fn grouping<'a>(mut tokens: &'a [Token], mut ops: &mut Vec<Operation>) -> &'a [Token] {
+    debug_assert_eq!(tokens[0], Token::LParen);
+    tokens = parse_precedence(&tokens[1..], &mut ops, Precedence::TERM);
 
-    parse_precedence(&mut tokens, &mut ops, Precedence::TERM);
-
-    let token = tokens.pop();
-    assert_eq!(token, Some(Token::RParen));
+    debug_assert_eq!(tokens[0], Token::RParen);
+    &tokens[1..]
 }
 
-fn binary(mut tokens: &mut Vec<Token>, mut ops: &mut Vec<Operation>, curr_token: &Token) {
-    let rule = token_to_rule(&curr_token);
-    let precedence = &rule.precedence;
+#[must_use]
+fn binary<'a>(mut tokens: &'a [Token], mut ops: &mut Vec<Operation>) -> &'a [Token] {
+    let curr_token = tokens[0];
 
+    let rule = token_to_rule(curr_token);
+    let precedence = rule.precedence;
     let next_precedence = match curr_token {
         Token::Number(_) | Token::Plus | Token::Minus | Token::Star | Token::Slash => {
             precedence.next_precedence() // left associative
         }
-        Token::UpArrow => precedence.clone(), // right associative
+        Token::UpArrow => precedence, // right associative
         _ => unreachable!(),
     };
 
-    parse_precedence(&mut tokens, &mut ops, next_precedence);
+    tokens = parse_precedence(&tokens[1..], &mut ops, next_precedence);
 
     match curr_token {
-        Token::Number(x) => ops.push(Operation::Number(*x)),
+        Token::Number(x) => ops.push(Operation::Number(x)),
         Token::Plus => ops.push(Operation::Add),
         Token::Minus => ops.push(Operation::Sub),
         Token::Star => ops.push(Operation::Mult),
@@ -158,9 +165,12 @@ fn binary(mut tokens: &mut Vec<Token>, mut ops: &mut Vec<Operation>, curr_token:
         Token::UpArrow => ops.push(Operation::Exp),
         Token::LParen | Token::RParen => unreachable!(),
     }
+
+    tokens
 }
 
-fn token_to_rule(token: &Token) -> ParseRule {
+#[must_use]
+fn token_to_rule<'a>(token: Token) -> ParseRule<'a> {
     use Token::*;
 
     match token {
@@ -179,69 +189,63 @@ fn token_to_rule(token: &Token) -> ParseRule {
     }
 }
 
-// uses .pop and .last on vector thus operates right to left thus the elements get reversed first
-fn parse_precedence(
-    mut tokens: &mut Vec<Token>,
+#[must_use]
+pub fn parse_precedence<'a>(
+    mut tokens: &'a [Token],
     mut ops: &mut Vec<Operation>,
     precedence: Precedence,
-) {
-    // dbg!(&ops);
-
+) -> &'a [Token] {
     // PREFIX RULE
-    assert!(!tokens.is_empty());
-
-    let token = tokens.pop().unwrap();
-    let rule = token_to_rule(&token);
+    let token = tokens[0];
+    let rule = token_to_rule(token);
 
     if let Some(prefix_rule) = &rule.prefix {
-        prefix_rule(&mut tokens, &mut ops, &token);
+        tokens = prefix_rule(&tokens, &mut ops);
     } else {
         panic!(
-            "no suitable prefix rule found: {:?} for token: {:?}",
+            "no prefix rule found for token: {:?} (precedence: {:?})",
             &rule.precedence, &token
         );
     }
 
     // INFIX RULES
     while !tokens.is_empty() {
-        if precedence > token_to_rule(&tokens.last().unwrap()).precedence {
+        let token = tokens[0];
+        if precedence > token_to_rule(token).precedence {
+            // dong the check here instead of during the while condition has a huge performance impact
+            // in my current benchmarks
             break;
         }
 
-        let token = tokens.pop().unwrap();
-
-        if let Some(infix_rule) = token_to_rule(&token).infix {
-            infix_rule(&mut tokens, &mut ops, &token);
+        if let Some(infix_rule) = token_to_rule(token).infix {
+            tokens = infix_rule(tokens, &mut ops);
         } else {
-            panic!(
-                "expected to find infix rule but did not find one for token: {:?}",
-                token
-            );
+            panic!("no infix rule found for token: {:?}", token);
         }
     }
+
+    tokens
 }
 
 pub fn run(input: &str) -> i64 {
     // println!("{}", input);
 
-    let mut tokens = tokenize(input);
+    let tokens = tokenize(input);
     // dbg!(&tokens);
 
-    tokens.reverse();
-
     let mut ops = vec![];
-    parse_precedence(&mut tokens, &mut ops, Precedence::NONE);
+    let _ = parse_precedence(&tokens, &mut ops, Precedence::NONE);
     // dbg!(&ops);
 
     ops.reverse();
 
-    // print!("DONE running\n\n\n");
     interpret(&mut ops)
+    // 0
 }
 
 // like parse_precedence, interpret runs right to left thus the arg has to be reversed first
 pub fn interpret(ops: &mut Vec<Operation>) -> i64 {
-    assert!(!ops.is_empty());
+    debug_assert!(!ops.is_empty());
     // dbg!(&ops);
 
     let mut curr_ops = vec![];
@@ -259,7 +263,7 @@ pub fn interpret(ops: &mut Vec<Operation>) -> i64 {
     }
 
     if let Some(Number(x)) = curr_ops.pop() {
-        assert!(curr_ops.is_empty());
+        debug_assert!(curr_ops.is_empty());
         x
     } else {
         panic!("could not interpret");
