@@ -18,16 +18,16 @@ macro_rules! rule {
 }
 
 macro_rules! binary_op {
-    ($curr_ops : expr,$ops : expr => $operation : expr) => {{
-        if let Some(Number(a)) = $curr_ops.pop() {
-            if let Some(Number(b)) = $curr_ops.pop() {
-                $ops.push(Number($operation(a, b)));
-            } else {
-                panic!("could not pop two from curr_ops");
-            };
-        } else {
-            panic!("could not pop one from curr_ops");
-        };
+    ($stack : expr => $operation : expr) => {{
+        let first = $stack.pop().unwrap();
+        let second = $stack.pop().unwrap();
+
+        match (first, second) {
+            (Number(a), Number(b)) => {
+                $stack.push(Number($operation(b, a)));
+            }
+            _ => unreachable!(),
+        }
     }};
 }
 
@@ -228,42 +228,35 @@ pub fn parse_precedence<'a>(
 }
 
 pub fn run(input: &str) -> i64 {
-    // println!("{}", input);
-
     let tokens = tokenize(input);
-    // dbg!(&tokens);
 
     let mut ops = vec![];
-    let _ = parse_precedence(&tokens, &mut ops, Precedence::NONE);
-    // dbg!(&ops);
+    let tokens = parse_precedence(&tokens, &mut ops, Precedence::NONE);
+    debug_assert!(tokens.is_empty());
 
-    ops.reverse();
-
-    interpret(&mut ops)
-    // 0
+    interpret(&ops)
 }
 
-// like parse_precedence, interpret runs right to left thus the arg has to be reversed first
-pub fn interpret(ops: &mut Vec<Operation>) -> i64 {
+#[must_use]
+pub fn interpret(ops: &[Operation]) -> i64 {
     debug_assert!(!ops.is_empty());
-    // dbg!(&ops);
 
-    let mut curr_ops = vec![];
+    let mut stack = vec![];
 
     use Operation::*;
-    while let Some(op) = ops.pop() {
+    for op in ops {
         match op {
-            Number(x) => curr_ops.push(Number(x)),
-            Add => binary_op!(curr_ops,ops => { |a, b| a + b } ),
-            Sub => binary_op!(curr_ops,ops => { |a, b| b - a } ),
-            Mult => binary_op!(curr_ops,ops => { |a, b| a * b } ),
-            Div => binary_op!(curr_ops,ops => { |a, b| b / a } ),
-            Exp => binary_op!(curr_ops,ops =>{ |a :i64, b : i64| i64::pow(b,a as u32)} ),
+            Number(x) => stack.push(Number(*x)),
+            Add => binary_op!(stack => {|a, b| a + b}),
+            Sub => binary_op!(stack => {|a, b| a - b}),
+            Mult => binary_op!(stack => { |a, b| a * b } ),
+            Div => binary_op!(stack => { |a, b| a / b } ),
+            Exp => binary_op!(stack =>{ |a :i64, b : i64| i64::pow(a,b as u32)} ),
         }
     }
 
-    if let Some(Number(x)) = curr_ops.pop() {
-        debug_assert!(curr_ops.is_empty());
+    if let Some(Number(x)) = stack.pop() {
+        debug_assert!(stack.is_empty());
         x
     } else {
         panic!("could not interpret");
