@@ -1,5 +1,13 @@
+use once_cell::sync::Lazy;
+use std::sync::Mutex;
+
 #[cfg(test)]
 mod tests;
+
+mod ast;
+pub use ast::Expr;
+
+static INTERNS: Lazy<Mutex<Vec<String>>> = Lazy::new(|| Mutex::new(vec![]));
 
 macro_rules! rule {
     ($prefix : expr, $infix : expr ; $precedence : expr) => {{
@@ -31,7 +39,7 @@ macro_rules! binary_op {
     }};
 }
 
-#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum Token {
     Number(i64),
     Plus,
@@ -41,6 +49,45 @@ pub enum Token {
     UpArrow,
     LParen,
     RParen,
+    Eq,
+    Identifier(StringID),
+    Semi,
+}
+
+#[derive(Copy, Clone, PartialEq)]
+pub struct StringID {
+    id: usize,
+}
+
+impl std::fmt::Debug for StringID {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "StringID id {:?}, String {:?}",
+            self.id,
+            self.get_string()
+        )
+    }
+}
+
+impl StringID {
+    fn get_string(self) -> String {
+        INTERNS.lock().unwrap()[self.id].to_string()
+    }
+}
+
+fn intern_string(s: &str) -> StringID {
+    let mut interns = INTERNS.lock().unwrap();
+    let ok = interns.iter().position(|elem| elem == &s);
+
+    match ok {
+        Some(id) => StringID { id },
+        None => {
+            interns.push(s.to_string());
+            let id = interns.len() - 1;
+            StringID { id }
+        }
+    }
 }
 
 pub fn tokenize(s: &str) -> Vec<Token> {
@@ -60,8 +107,10 @@ pub fn tokenize(s: &str) -> Vec<Token> {
             '^' => tokens.push(UpArrow),
             '(' => tokens.push(LParen),
             ')' => tokens.push(RParen),
-            ' ' => {}
-            digit_c => {
+            '=' => tokens.push(Eq),
+            ';' => tokens.push(Semi),
+            ' ' | '\n' | '\r' => {}
+            digit_c if digit_c.is_digit(10) => {
                 debug_assert!(digit_c.is_digit(10));
                 let mut num_acc = digit_c.to_digit(10).unwrap() as i64;
 
@@ -73,13 +122,28 @@ pub fn tokenize(s: &str) -> Vec<Token> {
 
                 tokens.push(Number(num_acc));
             }
+            c => {
+                let mut ident = String::new();
+                ident.push(c);
+                while let Some(curr_char) = iter.peek() {
+                    if curr_char.is_alphanumeric() {
+                        ident.push(*curr_char);
+                        iter.next();
+                    } else {
+                        break;
+                    }
+                }
+
+                let id = intern_string(&ident);
+                tokens.push(Identifier(id));
+            }
         }
     }
 
     tokens
 }
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub enum Operation {
     Number(i64),
     Add,
@@ -87,14 +151,17 @@ pub enum Operation {
     Mult,
     Div,
     Exp,
+    Assign,
 }
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd)]
+#[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub enum Precedence {
     NONE,
+    ASSIGN,
     TERM,
     FACTOR,
     EXP,
+    NEG,
     CALL,
     MAX,
 }
@@ -102,17 +169,19 @@ pub enum Precedence {
 impl Precedence {
     fn next_precedence(&self) -> Precedence {
         match self {
-            Precedence::NONE => Precedence::TERM,
+            Precedence::NONE => Precedence::ASSIGN,
+            Precedence::ASSIGN => Precedence::TERM,
             Precedence::TERM => Precedence::FACTOR,
             Precedence::FACTOR => Precedence::EXP,
-            Precedence::EXP => Precedence::CALL,
+            Precedence::EXP => Precedence::NEG,
+            Precedence::NEG => Precedence::CALL,
             Precedence::CALL => Precedence::MAX,
             Precedence::MAX => Precedence::MAX,
         }
     }
 }
 
-type ParseFn<'a> = dyn Fn(&'a [Token], &mut Vec<Operation>) -> &'a [Token];
+type ParseFn<'a> = dyn Fn(&'a [Token], &Option<Expr>) -> (Expr, &'a [Token]);
 type OptParseFn<'a> = Option<&'a ParseFn<'a>>;
 
 struct ParseRule<'a> {
@@ -122,26 +191,58 @@ struct ParseRule<'a> {
 }
 
 #[must_use]
-fn number<'a>(tokens: &'a [Token], ops: &mut Vec<Operation>) -> &'a [Token] {
+fn number<'a>(tokens: &'a [Token], _: &Option<Expr>) -> (Expr, &'a [Token]) {
     match tokens[0] {
-        Token::Number(n) => ops.push(Operation::Number(n)),
+        Token::Number(n) => {
+            return (Expr::Number(n), &tokens[1..]);
+        }
         x => panic!("found Token {:?} in call to number<'a>()... ", x),
     }
-
-    &tokens[1..]
 }
 
 #[must_use]
-fn grouping<'a>(mut tokens: &'a [Token], mut ops: &mut Vec<Operation>) -> &'a [Token] {
+fn identifier<'a>(tokens: &'a [Token], _: &Option<Expr>) -> (Expr, &'a [Token]) {
+    match tokens[0] {
+        Token::Identifier(id) => {
+            return (Expr::Identifier(id), &tokens[1..]);
+        }
+        x => panic!("found Token {:?} in call to identifier<'a>()... ", x),
+    }
+}
+
+#[must_use]
+fn grouping<'a>(tokens: &'a [Token], _: &Option<Expr>) -> (Expr, &'a [Token]) {
     debug_assert_eq!(tokens[0], Token::LParen);
-    tokens = parse_precedence(&tokens[1..], &mut ops, Precedence::TERM);
+    let (expr_rhs, tokens) = parse_precedence(&tokens[1..], Precedence::TERM);
 
     debug_assert_eq!(tokens[0], Token::RParen);
-    &tokens[1..]
+    (expr_rhs, &tokens[1..])
 }
 
 #[must_use]
-fn binary<'a>(mut tokens: &'a [Token], mut ops: &mut Vec<Operation>) -> &'a [Token] {
+fn negate<'a>(tokens: &'a [Token], _: &Option<Expr>) -> (Expr, &'a [Token]) {
+    debug_assert_eq!(tokens[0], Token::Minus);
+
+    let (expr_rhs, tokens) = parse_precedence(&tokens[1..], Precedence::NEG);
+
+    (Expr::Negate(Box::new(expr_rhs)), tokens)
+}
+
+#[must_use]
+fn assign<'a>(tokens: &'a [Token], expr_lhs: &Option<Expr>) -> (Expr, &'a [Token]) {
+    let curr_token = tokens[0];
+
+    let rule = token_to_rule(curr_token);
+    let (expr_rhs, tokens) = parse_precedence(&tokens[1..], rule.precedence);
+
+    (
+        Expr::Assign(Box::new(expr_lhs.clone().unwrap()), Box::new(expr_rhs)),
+        tokens,
+    )
+}
+
+#[must_use]
+fn binary<'a>(tokens: &'a [Token], expr_lhs: &Option<Expr>) -> (Expr, &'a [Token]) {
     let curr_token = tokens[0];
 
     let rule = token_to_rule(curr_token);
@@ -154,19 +255,22 @@ fn binary<'a>(mut tokens: &'a [Token], mut ops: &mut Vec<Operation>) -> &'a [Tok
         _ => unreachable!(),
     };
 
-    tokens = parse_precedence(&tokens[1..], &mut ops, next_precedence);
+    let (expr_rhs, tokens) = parse_precedence(&tokens[1..], next_precedence);
+    // dbg!(&expr_rhs);
 
-    match curr_token {
-        Token::Number(x) => ops.push(Operation::Number(x)),
-        Token::Plus => ops.push(Operation::Add),
-        Token::Minus => ops.push(Operation::Sub),
-        Token::Star => ops.push(Operation::Mult),
-        Token::Slash => ops.push(Operation::Div),
-        Token::UpArrow => ops.push(Operation::Exp),
-        Token::LParen | Token::RParen => unreachable!(),
-    }
+    let ret_expr = match curr_token {
+        Token::Plus => Expr::Add(Box::new(expr_lhs.clone().unwrap()), Box::new(expr_rhs)),
+        Token::Minus => Expr::Sub(Box::new(expr_lhs.clone().unwrap()), Box::new(expr_rhs)),
+        Token::Star => Expr::Mult(Box::new(expr_lhs.clone().unwrap()), Box::new(expr_rhs)),
+        Token::Slash => Expr::Div(Box::new(expr_lhs.clone().unwrap()), Box::new(expr_rhs)),
+        Token::UpArrow => Expr::Exp(Box::new(expr_lhs.clone().unwrap()), Box::new(expr_rhs)),
+        Token::Eq => todo!(),
+        Token::Identifier(_s) => todo!(),
+        Token::Semi => todo!(),
+        Token::Number(_) | Token::LParen | Token::RParen => unreachable!(),
+    };
 
-    tokens
+    (ret_expr, tokens)
 }
 
 #[must_use]
@@ -174,10 +278,11 @@ fn token_to_rule<'a>(token: Token) -> ParseRule<'a> {
     use Token::*;
 
     match token {
+        // TokenType       prefix rule      infix rule       precedence (infix only)
         Number(_) => rule!(Some(&number), OptParseFn::None ; Precedence::NONE),
 
         Plus => rule!(OptParseFn::None, Some(&binary) ; Precedence::TERM),
-        Minus => rule!(OptParseFn::None, Some(&binary) ; Precedence::TERM),
+        Minus => rule!(Some(&negate), Some(&binary) ; Precedence::TERM),
 
         Star => rule!(OptParseFn::None, Some(&binary) ; Precedence::FACTOR),
         Slash => rule!(OptParseFn::None, Some(&binary) ; Precedence::FACTOR),
@@ -186,55 +291,72 @@ fn token_to_rule<'a>(token: Token) -> ParseRule<'a> {
 
         LParen => rule!(Some(&grouping), OptParseFn::None ; Precedence::CALL),
         RParen => rule!(OptParseFn::None, OptParseFn::None ; Precedence::NONE),
+
+        Eq => rule!(OptParseFn::None, Some(&assign) ; Precedence::ASSIGN),
+        Identifier(_) => rule!(Some(&identifier), OptParseFn::None ; Precedence::NONE),
+        Semi => rule!(OptParseFn::None, OptParseFn::None ; Precedence::NONE),
     }
 }
 
+// 3*2+5
+// 3 2 * 5 +
 #[must_use]
-pub fn parse_precedence<'a>(
-    mut tokens: &'a [Token],
-    mut ops: &mut Vec<Operation>,
-    precedence: Precedence,
-) -> &'a [Token] {
+pub fn parse_precedence<'a>(tokens: &'a [Token], precedence: Precedence) -> (Expr, &'a [Token]) {
     // PREFIX RULE
-    let token = tokens[0];
-    let rule = token_to_rule(token);
-
+    let rule = token_to_rule(tokens[0]);
     if let Some(prefix_rule) = &rule.prefix {
-        tokens = prefix_rule(&tokens, &mut ops);
+        let (mut expr_lhs, mut tokens) = prefix_rule(&tokens, &None);
+
+        // INFIX RULES
+        while !tokens.is_empty() {
+            let token = tokens[0];
+            if precedence > token_to_rule(token).precedence {
+                // dong the check here instead of during the while condition has a huge performance impact
+                // in my current benchmarks
+                break;
+            }
+
+            if let Some(infix_rule) = token_to_rule(token).infix {
+                let (expr_top, new_tokens) = infix_rule(tokens, &Some(expr_lhs));
+                tokens = new_tokens;
+                expr_lhs = expr_top;
+            } else {
+                panic!("no infix rule found for token: {:?}", token);
+            }
+        }
+
+        return (expr_lhs.clone(), tokens);
     } else {
         panic!(
             "no prefix rule found for token: {:?} (precedence: {:?})",
-            &rule.precedence, &token
+            &rule.precedence, &tokens[0]
         );
-    }
-
-    // INFIX RULES
-    while !tokens.is_empty() {
-        let token = tokens[0];
-        if precedence > token_to_rule(token).precedence {
-            // dong the check here instead of during the while condition has a huge performance impact
-            // in my current benchmarks
-            break;
-        }
-
-        if let Some(infix_rule) = token_to_rule(token).infix {
-            tokens = infix_rule(tokens, &mut ops);
-        } else {
-            panic!("no infix rule found for token: {:?}", token);
-        }
-    }
-
-    tokens
+    };
 }
 
+#[must_use]
 pub fn run(input: &str) -> i64 {
     let tokens = tokenize(input);
 
-    let mut ops = vec![];
-    let tokens = parse_precedence(&tokens, &mut ops, Precedence::NONE);
+    let (expr, tokens) = parse_precedence(&tokens, Precedence::NONE);
     debug_assert!(tokens.is_empty());
+    dbg!(&expr);
 
-    interpret(&ops)
+    interpret_ast(&expr)
+}
+
+#[must_use]
+pub fn interpret_ast(expr: &Expr) -> i64 {
+    match expr {
+        Expr::Number(x) => *x,
+        Expr::Add(lhs, rhs) => interpret_ast(lhs) + interpret_ast(rhs),
+        Expr::Sub(lhs, rhs) => interpret_ast(lhs) - interpret_ast(rhs),
+        Expr::Mult(lhs, rhs) => interpret_ast(lhs) * interpret_ast(rhs),
+        Expr::Div(lhs, rhs) => interpret_ast(lhs) / interpret_ast(rhs),
+        Expr::Exp(a, b) => i64::pow(interpret_ast(a), interpret_ast(b) as u32),
+        Expr::Negate(val) => -interpret_ast(val),
+        Expr::Assign(_, _) | Expr::Block(_) | Expr::Identifier(_) => todo!(),
+    }
 }
 
 #[must_use]
@@ -252,6 +374,7 @@ pub fn interpret(ops: &[Operation]) -> i64 {
             Mult => binary_op!(stack => { |a, b| a * b } ),
             Div => binary_op!(stack => { |a, b| a / b } ),
             Exp => binary_op!(stack =>{ |a :i64, b : i64| i64::pow(a,b as u32)} ),
+            Assign => todo!(),
         }
     }
 

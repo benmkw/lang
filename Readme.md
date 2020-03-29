@@ -1,4 +1,4 @@
-# my_lang
+# lang
 
 ![](https://github.com/benmkw/my_lang/workflows/CI/badge.svg)
 

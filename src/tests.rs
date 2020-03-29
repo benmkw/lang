@@ -7,7 +7,9 @@ fn test() {
     let input = "10*2+3";
     assert_eq!(run(input), 10 * 2 + 3);
 
-    let input = "10+2*3";
+    // test that newlines work
+    let input = "10+2
+    *3";
     assert_eq!(run(input), 10 + 2 * 3);
 
     let input = "1*2+3*4+5-19*8/2";
