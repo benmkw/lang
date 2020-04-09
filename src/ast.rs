@@ -4,15 +4,15 @@ use crate::StringID;
 pub enum Expr {
     Block(Vec<Expr>),
 
-    Add(Box<Expr>, Box<Expr>),
-    Sub(Box<Expr>, Box<Expr>),
-    Mult(Box<Expr>, Box<Expr>),
-    Div(Box<Expr>, Box<Expr>),
-    Exp(Box<Expr>, Box<Expr>),
+    Add(Box<(Expr, Expr)>),
+    Sub(Box<(Expr, Expr)>),
+    Mult(Box<(Expr, Expr)>),
+    Div(Box<(Expr, Expr)>),
+    Exp(Box<(Expr, Expr)>),
 
     Negate(Box<Expr>),
 
-    Assign(Box<Expr>, Box<Expr>),
+    Assign(Box<(Expr, Expr)>),
 
     Identifier(StringID),
 

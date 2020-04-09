@@ -1,3 +1,24 @@
+#![feature(box_patterns)]
+#![warn(
+    clippy::restriction,
+    clippy::cargo,
+    clippy::all,
+    clippy::pedantic,
+    clippy::nursery,
+    clippy::clone_on_ref_ptr
+)]
+#![allow(
+    clippy::shadow_unrelated,
+    clippy::cognitive_complexity,
+    clippy::too_many_lines,
+    clippy::use_debug,
+    clippy::dbg_macro,
+    clippy::print_stdout,
+    clippy::missing_docs_in_private_items,
+    clippy::implicit_return,
+    clippy::option_unwrap_used,
+    clippy::enum_glob_use
+)]
 use once_cell::sync::Lazy;
 use std::sync::Mutex;
 
@@ -6,6 +27,9 @@ mod tests;
 
 mod ast;
 pub use ast::Expr;
+
+mod jit;
+pub use jit::interpret_ast_jit;
 
 static INTERNS: Lazy<Mutex<Vec<String>>> = Lazy::new(|| Mutex::new(vec![]));
 
@@ -236,7 +260,7 @@ fn assign<'a>(tokens: &'a [Token], expr_lhs: &Option<Expr>) -> (Expr, &'a [Token
     let (expr_rhs, tokens) = parse_precedence(&tokens[1..], rule.precedence);
 
     (
-        Expr::Assign(Box::new(expr_lhs.clone().unwrap()), Box::new(expr_rhs)),
+        Expr::Assign(Box::new((expr_lhs.clone().unwrap(), expr_rhs))),
         tokens,
     )
 }
@@ -259,11 +283,11 @@ fn binary<'a>(tokens: &'a [Token], expr_lhs: &Option<Expr>) -> (Expr, &'a [Token
     // dbg!(&expr_rhs);
 
     let ret_expr = match curr_token {
-        Token::Plus => Expr::Add(Box::new(expr_lhs.clone().unwrap()), Box::new(expr_rhs)),
-        Token::Minus => Expr::Sub(Box::new(expr_lhs.clone().unwrap()), Box::new(expr_rhs)),
-        Token::Star => Expr::Mult(Box::new(expr_lhs.clone().unwrap()), Box::new(expr_rhs)),
-        Token::Slash => Expr::Div(Box::new(expr_lhs.clone().unwrap()), Box::new(expr_rhs)),
-        Token::UpArrow => Expr::Exp(Box::new(expr_lhs.clone().unwrap()), Box::new(expr_rhs)),
+        Token::Plus => Expr::Add(Box::new((expr_lhs.clone().unwrap(), expr_rhs))),
+        Token::Minus => Expr::Sub(Box::new((expr_lhs.clone().unwrap(), expr_rhs))),
+        Token::Star => Expr::Mult(Box::new((expr_lhs.clone().unwrap(), expr_rhs))),
+        Token::Slash => Expr::Div(Box::new((expr_lhs.clone().unwrap(), expr_rhs))),
+        Token::UpArrow => Expr::Exp(Box::new((expr_lhs.clone().unwrap(), expr_rhs))),
         Token::Eq => todo!(),
         Token::Identifier(_s) => todo!(),
         Token::Semi => todo!(),
@@ -340,22 +364,23 @@ pub fn run(input: &str) -> i64 {
 
     let (expr, tokens) = parse_precedence(&tokens, Precedence::NONE);
     debug_assert!(tokens.is_empty());
-    dbg!(&expr);
+    // dbg!(&expr);
 
-    interpret_ast(&expr)
+    // interpret_ast(&expr)
+    interpret_ast_jit(&expr)
 }
 
 #[must_use]
 pub fn interpret_ast(expr: &Expr) -> i64 {
     match expr {
         Expr::Number(x) => *x,
-        Expr::Add(lhs, rhs) => interpret_ast(lhs) + interpret_ast(rhs),
-        Expr::Sub(lhs, rhs) => interpret_ast(lhs) - interpret_ast(rhs),
-        Expr::Mult(lhs, rhs) => interpret_ast(lhs) * interpret_ast(rhs),
-        Expr::Div(lhs, rhs) => interpret_ast(lhs) / interpret_ast(rhs),
-        Expr::Exp(a, b) => i64::pow(interpret_ast(a), interpret_ast(b) as u32),
+        Expr::Add(box (lhs, rhs)) => interpret_ast(lhs) + interpret_ast(rhs),
+        Expr::Sub(box (lhs, rhs)) => interpret_ast(lhs) - interpret_ast(rhs),
+        Expr::Mult(box (lhs, rhs)) => interpret_ast(lhs) * interpret_ast(rhs),
+        Expr::Div(box (lhs, rhs)) => interpret_ast(lhs) / interpret_ast(rhs),
+        Expr::Exp(box (a, b)) => i64::pow(interpret_ast(a), interpret_ast(b) as u32),
         Expr::Negate(val) => -interpret_ast(val),
-        Expr::Assign(_, _) | Expr::Block(_) | Expr::Identifier(_) => todo!(),
+        Expr::Assign(_) | Expr::Block(_) | Expr::Identifier(_) => todo!(),
     }
 }
 

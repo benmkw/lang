@@ -7,24 +7,28 @@ fn main() {
 
     assert!(Precedence::NONE < Precedence::TERM);
 
-    let input = "10+
-    2*3";
+    // let input = "10+
+    // 2*3";
 
-    let input = "asdf = 58;
-    asdf
-    ";
+    // let input = "asdf = 58 + 2";
+    // let input = "a = 58 + 2";
+    let input = "1-2-3";
+    // let input = "1+2+3";
+    // let input = "-4^2+2"; // 18 ok
 
     // assert_eq!(run(input), 10 + 2 * 3);
 
     // let input = "293474*4^5-50";
-    let tokens = tokenize(input);
-    dbg!(tokens);
+    // let tokens = tokenize(input);
+    // dbg!(&tokens);
 
-    // let mut ops = vec![];
-    // let _ = parse_precedence(&tokens, &mut ops, Precedence::NONE);
-    // dbg!(&ops);
+    // let (expr, tokens) = parse_precedence(&tokens, Precedence::NONE);
 
-    // let res = interpret(&ops);
+    // dbg!(&expr);
+    // assert!(tokens.is_empty());
+    dbg!(run(input));
+
+    // let res = interpret(&expr);
     // dbg!(res);
 
     // dbg!(run(input));

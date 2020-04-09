@@ -9,6 +9,10 @@ publish = false
 once_cell = "1.3"
 color-backtrace = "*"
 
+cranelift = "0.58.0"
+cranelift-module = "0.58.0"
+cranelift-simplejit = "0.58.0" # needed? TODO
+
 [dev-dependencies]
 criterion = { version = "0.3", default-features = false }
 
