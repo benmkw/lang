@@ -12,21 +12,23 @@ fn main() {
 
     // let input = "asdf = 58 + 2";
     // let input = "a = 58 + 2";
-    let input = "1-2-3";
+    // let input = "1-2-3";
+    let input = "-1";
     // let input = "1+2+3";
     // let input = "-4^2+2"; // 18 ok
 
     // assert_eq!(run(input), 10 + 2 * 3);
 
     // let input = "293474*4^5-50";
-    // let tokens = tokenize(input);
+    let tokens = tokenize(input);
     // dbg!(&tokens);
 
-    // let (expr, tokens) = parse_precedence(&tokens, Precedence::NONE);
+    let (expr, tokens) = parse_precedence(&tokens, Precedence::NONE);
 
     // dbg!(&expr);
-    // assert!(tokens.is_empty());
-    dbg!(run(input));
+    assert!(tokens.is_empty());
+    dbg!(obj::interpret(&expr));
+    // dbg!(run(input));
 
     // let res = interpret(&expr);
     // dbg!(res);

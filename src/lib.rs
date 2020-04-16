@@ -1,10 +1,10 @@
 #![feature(box_patterns)]
 #![warn(
-    clippy::restriction,
-    clippy::cargo,
+    // clippy::restriction,
+    // clippy::cargo,
     clippy::all,
-    clippy::pedantic,
-    clippy::nursery,
+    // clippy::pedantic,
+    // clippy::nursery,
     clippy::clone_on_ref_ptr
 )]
 #![allow(
@@ -17,10 +17,11 @@
     clippy::missing_docs_in_private_items,
     clippy::implicit_return,
     clippy::option_unwrap_used,
-    clippy::enum_glob_use
+    clippy::enum_glob_use,
+    clippy::unreachable,
+    clippy::needless_return
 )]
-use once_cell::sync::Lazy;
-use std::sync::Mutex;
+use once_cell::unsync::OnceCell;
 
 #[cfg(test)]
 mod tests;
@@ -28,10 +29,10 @@ mod tests;
 mod ast;
 pub use ast::Expr;
 
-mod jit;
-pub use jit::interpret_ast_jit;
+mod compiler;
+pub use compiler::{jit, obj, Compiler};
 
-static INTERNS: Lazy<Mutex<Vec<String>>> = Lazy::new(|| Mutex::new(vec![]));
+static mut INTERNS: OnceCell<Vec<String>> = OnceCell::new();
 
 macro_rules! rule {
     ($prefix : expr, $infix : expr ; $precedence : expr) => {{
@@ -89,27 +90,33 @@ impl std::fmt::Debug for StringID {
             f,
             "StringID id {:?}, String {:?}",
             self.id,
-            self.get_string()
+            String::from(self)
         )
     }
 }
 
-impl StringID {
-    fn get_string(self) -> String {
-        INTERNS.lock().unwrap()[self.id].to_string()
+impl From<&StringID> for String {
+    fn from(s: &StringID) -> String {
+        unsafe { INTERNS.get().unwrap()[s.id].to_string() }
     }
 }
 
 fn intern_string(s: &str) -> StringID {
-    let mut interns = INTERNS.lock().unwrap();
-    let ok = interns.iter().position(|elem| elem == &s);
+    unsafe {
+        if INTERNS.get() == None {
+            let _ = INTERNS.set(vec![]);
+        }
 
-    match ok {
-        Some(id) => StringID { id },
-        None => {
-            interns.push(s.to_string());
-            let id = interns.len() - 1;
-            StringID { id }
+        let interns = INTERNS.get_mut().unwrap();
+        let ok = interns.iter().position(|elem| elem == s);
+
+        match ok {
+            Some(id) => StringID { id },
+            None => {
+                interns.push(s.to_string());
+                let id = interns.len() - 1;
+                StringID { id }
+            }
         }
     }
 }
@@ -217,9 +224,7 @@ struct ParseRule<'a> {
 #[must_use]
 fn number<'a>(tokens: &'a [Token], _: &Option<Expr>) -> (Expr, &'a [Token]) {
     match tokens[0] {
-        Token::Number(n) => {
-            return (Expr::Number(n), &tokens[1..]);
-        }
+        Token::Number(n) => (Expr::Number(n), &tokens[1..]),
         x => panic!("found Token {:?} in call to number<'a>()... ", x),
     }
 }
@@ -227,9 +232,7 @@ fn number<'a>(tokens: &'a [Token], _: &Option<Expr>) -> (Expr, &'a [Token]) {
 #[must_use]
 fn identifier<'a>(tokens: &'a [Token], _: &Option<Expr>) -> (Expr, &'a [Token]) {
     match tokens[0] {
-        Token::Identifier(id) => {
-            return (Expr::Identifier(id), &tokens[1..]);
-        }
+        Token::Identifier(id) => (Expr::Identifier(id), &tokens[1..]),
         x => panic!("found Token {:?} in call to identifier<'a>()... ", x),
     }
 }
@@ -325,11 +328,11 @@ fn token_to_rule<'a>(token: Token) -> ParseRule<'a> {
 // 3*2+5
 // 3 2 * 5 +
 #[must_use]
-pub fn parse_precedence<'a>(tokens: &'a [Token], precedence: Precedence) -> (Expr, &'a [Token]) {
+pub fn parse_precedence(tokens: &[Token], precedence: Precedence) -> (Expr, &[Token]) {
     // PREFIX RULE
     let rule = token_to_rule(tokens[0]);
     if let Some(prefix_rule) = &rule.prefix {
-        let (mut expr_lhs, mut tokens) = prefix_rule(&tokens, &None);
+        let (mut expr_lhs, mut tokens) = prefix_rule(tokens, &None);
 
         // INFIX RULES
         while !tokens.is_empty() {
@@ -349,7 +352,7 @@ pub fn parse_precedence<'a>(tokens: &'a [Token], precedence: Precedence) -> (Exp
             }
         }
 
-        return (expr_lhs.clone(), tokens);
+        return (expr_lhs, tokens);
     } else {
         panic!(
             "no prefix rule found for token: {:?} (precedence: {:?})",
@@ -364,10 +367,14 @@ pub fn run(input: &str) -> i64 {
 
     let (expr, tokens) = parse_precedence(&tokens, Precedence::NONE);
     debug_assert!(tokens.is_empty());
-    // dbg!(&expr);
 
-    // interpret_ast(&expr)
-    interpret_ast_jit(&expr)
+    let ast_res = interpret_ast(&expr);
+    let jit_res = jit::interpret(&expr);
+    // Disable on ci because missing linker HACK TODO
+    // let obj_res = obj::interpret(&expr);
+    // assert_eq!(jit_res, obj_res);
+    assert_eq!(jit_res, ast_res);
+    jit_res
 }
 
 #[must_use]

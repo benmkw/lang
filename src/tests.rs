@@ -12,8 +12,8 @@ fn test() {
     *3";
     assert_eq!(run(input), 10 + 2 * 3);
 
-    let input = "1*2+3*4+5-19*8/2";
-    assert_eq!(run(input), 1 * 2 + 3 * 4 + 5 - 19 * 8 / 2);
+    let input = "( 1*2+3*4+5-19*8/2 ) + 57";
+    assert_eq!(run(input), (1 * 2 + 3 * 4 + 5 - 19 * 8 / 2) + 57);
 
     let input = "2*3+3+4+1";
     assert_eq!(run(input), 2 * 3 + 3 + 4 + 1);
@@ -21,8 +21,8 @@ fn test() {
     let input = "8/2";
     assert_eq!(run(input), 8 / 2);
 
-    let input = "1-2-3";
-    assert_eq!(run(input), -4);
+    let input = "(1-2-3) + 5";
+    assert_eq!(run(input), (-4) + 5);
 
     // let input = "2^5";
     // let val = run(input);

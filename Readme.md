@@ -18,3 +18,14 @@ I used a very early [commit](https://github.com/munificent/craftinginterpreters/
 My motivation for just implementing arithmetic operations was to really understand pratt parsing with as little overhead (read: no features of the "language" but just understand the flow of the parsing procedures themselves) as possible and only do the key concepts first.
 
 I implemented a scheme interpreter after [Peter Norvig](https://norvig.com/lispy.html) next to understand more complex evaluation without the overhead of worrying much about parsing. The next step is to combine both parts of knowledge.
+
+
+cranelift docs:
+https://github.com/bytecodealliance/wasmtime/blob/master/cranelift/docs/index.md
+
+I adapted the cranelift simplejit demo and added it as backends which can emit/ link object files on macos or jit interpret the code.
+It also still has the ast interpreter for verification.
+
+Next goal is to have syntax for if/ function calls and translate assignments, if and function calls for all backends.
+I also want to investigate passing function pointers to the jit code and have it call those.
+The AST needs to be converted to a sort of arena because its very slow using Boxes.
