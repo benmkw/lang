@@ -22,6 +22,7 @@ I implemented a scheme interpreter after [Peter Norvig](https://norvig.com/lispy
 
 cranelift docs:
 https://github.com/bytecodealliance/wasmtime/blob/master/cranelift/docs/index.md
+simplejit https://github.com/bytecodealliance/simplejit-demo/tree/master/src
 
 I adapted the cranelift simplejit demo and added it as backends which can emit/ link object files on macos or jit interpret the code.
 It also still has the ast interpreter for verification.
@@ -29,3 +30,6 @@ It also still has the ast interpreter for verification.
 Next goal is to have syntax for if/ function calls and translate assignments, if and function calls for all backends.
 I also want to investigate passing function pointers to the jit code and have it call those.
 The AST needs to be converted to a sort of arena because its very slow using Boxes.
+
+
+develop an IR https://blog.rust-lang.org/2016/04/19/MIR.html#control-flow-graphs

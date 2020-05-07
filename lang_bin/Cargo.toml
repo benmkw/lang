@@ -1,0 +1,10 @@
+[package]
+name = "lang_bin"
+version = "0.1.0"
+authors = ["Benedikt Mandelkow <benedikt.mandelkow@rwth-aachen.de>"]
+edition = "2018"
+publish = false
+
+[dependencies]
+color-backtrace = "*"
+lang_lib = { path = "../lang_lib"}
